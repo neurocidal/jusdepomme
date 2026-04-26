@@ -1,0 +1,144 @@
+:root {
+  --bg: #f4e9d8;
+  --bg-panel: #fff8ee;
+  --bg-panel-2: #e0d6c4;
+  --text: #2f2418;
+  --text-dark: #120f0b;
+  --border: #8f7f67;
+  --border-dark: #2c241b;
+  --link: #0000cc;
+  --link-visited: #551a8b;
+  --accent: #cc2e2e;
+  --shadow: rgba(0, 0, 0, 0.18) 2px 2px 0px;
+
+  font-family: "Comic Sans MS", Verdana, Arial, sans-serif;
+  line-height: 1.3;
+  font-weight: normal;
+  color: var(--text);
+  background: var(--bg);
+
+  font-synthesis: none;
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: auto;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      #f4e9d8,
+      #f4e9d8 12px,
+      #efe1cc 12px,
+      #efe1cc 24px
+    );
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+a:visited {
+  color: var(--link-visited);
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--border-dark);
+  background: linear-gradient(to bottom, #fffdf8, #ddd0ba);
+  color: var(--text-dark);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+button:hover {
+  background: linear-gradient(to bottom, #fff8ef, #d8c7aa);
+}
+
+button:active {
+  transform: translate(1px, 1px);
+  box-shadow: none;
+}
+
+input,
+textarea {
+  border: 1px solid var(--border-dark);
+  background: #fffdf8;
+  color: var(--text-dark);
+  outline: none;
+}
+
+input:focus,
+textarea:focus {
+  background: #fff7cc;
+}
+
+marquee {
+  color: var(--accent);
+  font-weight: bold;
+  text-shadow: 1px 1px 0 #fff6;
+}
+
+.blink {
+  animation: blink 1s steps(1) infinite;
+}
+
+.pixel-border {
+  border: 1px solid var(--border-dark);
+  box-shadow: var(--shadow);
+  background: var(--bg-panel);
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dark);
+}
+
+.small-text {
+  font-size: 11px;
+}
+
+.tiny-text {
+  font-size: 10px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
