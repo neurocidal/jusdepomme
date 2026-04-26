@@ -1,12 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import './App.css';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import "./App.css";
 import { io } from "socket.io-client";
 
 const STORAGE_KEY = "jusdepomme-player-stats-v1";
 const LAST_NAME_KEY = "jusdepomme-last-player";
 const LAST_ROOM_KEY = "jusdepomme-last-room";
+const THEME_KEY = "jusdepomme-theme";
+const NAME_COLOR_KEY = "jusdepomme-name-color";
+const BOT_COUNT_KEY = "jusdepomme-bot-count";
+const SOUND_VOLUME_KEY = "jusdepomme-sound-volume";
 const TURN_SECONDS = 30;
-const SERVER_URL = "http://localhost:3001";
+const SERVER_URL =
+  import.meta.env.VITE_SERVER_URL ||
+  (import.meta.env.DEV ? "http://localhost:3001" : window.location.origin);
+const DEFAULT_BOT_COUNT = 2;
+const MAX_BOTS = 6;
+const BOT_OPTIONS = Array.from({ length: MAX_BOTS + 1 }, (_, i) => i);
+const SOUND_FILES = {
+  hover: "/sounds/card-hover.wav",
+  pick: "/sounds/card-pick.wav",
+  chat: "/sounds/chat-send.wav",
+  gameWin: "/sounds/game-win.wav",
+};
+const SOUND_FREQUENCIES = {
+  hover: 520,
+  pick: 720,
+  chat: 440,
+  gameWin: 880,
+};
 
 const socket = io(SERVER_URL, {
   autoConnect: false,
@@ -189,7 +210,9 @@ function readLastName() {
 function writeLastName(name) {
   try {
     localStorage.setItem(LAST_NAME_KEY, normalizeName(name));
-  } catch {}
+  } catch {
+    // Local persistence is best-effort.
+  }
 }
 
 function readLastRoom() {
@@ -205,7 +228,104 @@ function readLastRoom() {
 function writeLastRoom(room) {
   try {
     localStorage.setItem(LAST_ROOM_KEY, normalizeRoom(room));
-  } catch {}
+  } catch {
+    // Local persistence is best-effort.
+  }
+}
+
+function readThemeKey() {
+  try {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    return savedTheme && themes[savedTheme] ? savedTheme : "parchment";
+  } catch {
+    return "parchment";
+  }
+}
+
+function writeThemeKey(themeKey) {
+  try {
+    if (themes[themeKey]) {
+      localStorage.setItem(THEME_KEY, themeKey);
+    }
+  } catch {
+    // Local persistence is best-effort.
+  }
+}
+
+function normalizeColor(color, fallback) {
+  const value = String(color || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
+function readNameColor() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(NAME_COLOR_KEY) || "{}");
+    return {
+      inner: normalizeColor(parsed.inner, "#ffffff"),
+      glow: normalizeColor(parsed.glow, "#c96b3b"),
+    };
+  } catch {
+    return { inner: "#ffffff", glow: "#c96b3b" };
+  }
+}
+
+function writeNameColor(nameColor) {
+  try {
+    localStorage.setItem(
+      NAME_COLOR_KEY,
+      JSON.stringify({
+        inner: normalizeColor(nameColor?.inner, "#ffffff"),
+        glow: normalizeColor(nameColor?.glow, "#c96b3b"),
+      }),
+    );
+  } catch {
+    // Local persistence is best-effort.
+  }
+}
+
+function normalizeBotCount(botCount) {
+  const parsed = Number.parseInt(botCount, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_BOT_COUNT;
+  return Math.max(0, Math.min(MAX_BOTS, parsed));
+}
+
+function readBotCount() {
+  try {
+    return normalizeBotCount(localStorage.getItem(BOT_COUNT_KEY));
+  } catch {
+    return DEFAULT_BOT_COUNT;
+  }
+}
+
+function writeBotCount(botCount) {
+  try {
+    localStorage.setItem(BOT_COUNT_KEY, String(normalizeBotCount(botCount)));
+  } catch {
+    // Local persistence is best-effort.
+  }
+}
+
+function normalizeVolume(volume) {
+  const parsed = Number.parseFloat(volume);
+  if (!Number.isFinite(parsed)) return 0.7;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function readSoundVolume() {
+  try {
+    const savedVolume = localStorage.getItem(SOUND_VOLUME_KEY);
+    return savedVolume === null ? 0.7 : normalizeVolume(savedVolume);
+  } catch {
+    return 0.7;
+  }
+}
+
+function writeSoundVolume(volume) {
+  try {
+    localStorage.setItem(SOUND_VOLUME_KEY, String(normalizeVolume(volume)));
+  } catch {
+    // Local persistence is best-effort.
+  }
 }
 
 function syncRoomPath(room) {
@@ -214,13 +334,17 @@ function syncRoomPath(room) {
     if (window.location.pathname !== path) {
       window.history.replaceState({}, "", path);
     }
-  } catch {}
+  } catch {
+    // URL syncing is best-effort.
+  }
 }
 
 function clearRoomPath() {
   try {
     window.history.replaceState({}, "", "/");
-  } catch {}
+  } catch {
+    // URL syncing is best-effort.
+  }
 }
 
 function safeReadStats() {
@@ -235,7 +359,9 @@ function safeReadStats() {
 function safeWriteStats(stats) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
-  } catch {}
+  } catch {
+    // Local persistence is best-effort.
+  }
 }
 
 function statsKey(name) {
@@ -389,9 +515,14 @@ function renderTextWithEmojis(text, styles) {
 }
 
 export default function App() {
-  const [themeKey, setThemeKey] = useState("parchment");
+  const [themeKey, setThemeKey] = useState(readThemeKey);
   const [pendingName, setPendingName] = useState(readLastName());
   const [pendingRoom, setPendingRoom] = useState(readLastRoom());
+  const [pendingNameColor, setPendingNameColor] = useState(readNameColor);
+  const [pendingBotCount, setPendingBotCount] = useState(readBotCount);
+  const [soundVolume, setSoundVolume] = useState(readSoundVolume);
+  const [activeRooms, setActiveRooms] = useState([]);
+  const [roomsError, setRoomsError] = useState("");
   const [playerName, setPlayerName] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [playerRecord, setPlayerRecord] = useState(null);
@@ -407,8 +538,16 @@ export default function App() {
   const eventScrollRef = useRef(null);
   const chatScrollRef = useRef(null);
   const chatInputRef = useRef(null);
+  const sessionRef = useRef({
+    roomCode: "",
+    playerName: "",
+    nameColor: readNameColor(),
+  });
+  const audioContextRef = useRef(null);
+  const audioElementsRef = useRef({});
+  const lastGameWinSoundRef = useRef(0);
 
-  const theme = themes[themeKey];
+  const theme = themes[themeKey] || themes.parchment;
   const isTablet = viewportWidth < 1100;
   const isMobile = viewportWidth < 760;
   const styles = makeStyles(theme, { isTablet, isMobile });
@@ -451,6 +590,30 @@ export default function App() {
       document.body.style.backgroundImage = "none";
     };
   }, [theme]);
+
+  useEffect(() => {
+    writeThemeKey(themeKey);
+  }, [themeKey]);
+
+  useEffect(() => {
+    writeNameColor(pendingNameColor);
+  }, [pendingNameColor]);
+
+  useEffect(() => {
+    writeBotCount(pendingBotCount);
+  }, [pendingBotCount]);
+
+  useEffect(() => {
+    writeSoundVolume(soundVolume);
+  }, [soundVolume]);
+
+  useEffect(() => {
+    sessionRef.current = {
+      roomCode,
+      playerName,
+      nameColor: pendingNameColor,
+    };
+  }, [roomCode, playerName, pendingNameColor]);
 
   useEffect(() => {
     const styleId = "jusdepomme-scrollbars";
@@ -501,8 +664,146 @@ export default function App() {
     };
   }, [theme]);
 
+  const joinRoomSocket = useCallback(
+    (nextRoomCode, nextPlayerName, nextNameColor, onResult, options = {}) => {
+      const cleanedName = normalizeName(nextPlayerName);
+      const cleanedRoom = normalizeRoom(nextRoomCode);
+      if (!cleanedName || !cleanedRoom) return;
+
+      if (!socket.connected) {
+        socket.connect();
+      }
+
+      socket.emit(
+        "join_room",
+        {
+          roomCode: cleanedRoom,
+          playerName: cleanedName,
+          nameColor: {
+            inner: normalizeColor(nextNameColor?.inner, "#ffffff"),
+            glow: normalizeColor(nextNameColor?.glow, theme.select),
+          },
+          botCount:
+            typeof options.botCount === "undefined"
+              ? undefined
+              : normalizeBotCount(options.botCount),
+          silent: Boolean(options.silent),
+        },
+        onResult,
+      );
+    },
+    [theme.select],
+  );
+
+  const playSound = useCallback((soundKey) => {
+    const volume = normalizeVolume(soundVolume);
+    if (volume <= 0) return;
+
+    const playGeneratedSound = () => {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const context = audioContextRef.current || new AudioContext();
+        audioContextRef.current = context;
+        if (context.state === "suspended") {
+          context.resume();
+        }
+
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const now = context.currentTime;
+        oscillator.type = soundKey === "gameWin" ? "triangle" : "sine";
+        oscillator.frequency.setValueAtTime(
+          SOUND_FREQUENCIES[soundKey] || 440,
+          now,
+        );
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(
+          (soundKey === "gameWin" ? 0.12 : 0.05) * volume,
+          now + 0.01,
+        );
+        gain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          now + (soundKey === "gameWin" ? 0.45 : 0.12),
+        );
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + (soundKey === "gameWin" ? 0.48 : 0.14));
+      } catch {
+        // Sound effects are best-effort.
+      }
+    };
+
+    const soundFile = SOUND_FILES[soundKey];
+    if (soundFile) {
+      try {
+        if (!audioElementsRef.current[soundKey]) {
+          audioElementsRef.current[soundKey] = new Audio(soundFile);
+        }
+        const audio = audioElementsRef.current[soundKey].cloneNode();
+        audio.volume = (soundKey === "gameWin" ? 0.75 : 0.45) * volume;
+        const playPromise = audio.play();
+        if (playPromise?.catch) {
+          playPromise.catch(playGeneratedSound);
+        }
+        return;
+      } catch {
+        playGeneratedSound();
+        return;
+      }
+    }
+
+    playGeneratedSound();
+  }, [soundVolume]);
+
+  useEffect(() => {
+    if (game) return;
+    let cancelled = false;
+
+    const loadRooms = async () => {
+      try {
+        const response = await fetch(`${SERVER_URL}/rooms`);
+        if (!response.ok) throw new Error("rooms request failed");
+        const data = await response.json();
+        if (cancelled) return;
+        setActiveRooms(Array.isArray(data.rooms) ? data.rooms : []);
+        setRoomsError("");
+      } catch {
+        if (cancelled) return;
+        setActiveRooms([]);
+        setRoomsError("active rooms unavailable");
+      }
+    };
+
+    loadRooms();
+    const id = window.setInterval(loadRooms, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [game]);
+
   useEffect(() => {
     socket.connect();
+
+    const rejoinCurrentRoom = () => {
+      const session = sessionRef.current;
+      if (!session.roomCode || !session.playerName) return;
+      joinRoomSocket(
+        session.roomCode,
+        session.playerName,
+        session.nameColor,
+        (result) => {
+          if (!result?.ok) {
+            setJoinError(
+              result?.error || "Connection restored, but rejoin failed.",
+            );
+          }
+        },
+        { silent: true },
+      );
+    };
 
     const onRoomState = (room) => {
       setGame(room);
@@ -516,12 +817,27 @@ export default function App() {
     };
 
     socket.on("room_state", onRoomState);
+    socket.on("connect", rejoinCurrentRoom);
+    socket.io.on("reconnect", rejoinCurrentRoom);
+
+    const onFocus = () => rejoinCurrentRoom();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        rejoinCurrentRoom();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       socket.off("room_state", onRoomState);
+      socket.off("connect", rejoinCurrentRoom);
+      socket.io.off("reconnect", rejoinCurrentRoom);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       socket.disconnect();
     };
-  }, []);
+  }, [joinRoomSocket]);
 
   useEffect(() => {
     if (!game || game.phase !== "pick" || !game.turnEndsAt) return;
@@ -567,6 +883,13 @@ export default function App() {
   const fullFeed = game?.feed || [];
   const eventFeed = fullFeed.filter((msg) => (msg.type || "event") !== "chat");
   const chatFeed = fullFeed.filter((msg) => msg.type === "chat");
+  const playerColorByName = useMemo(() => {
+    const lookup = {};
+    game?.players?.forEach((player) => {
+      lookup[player.name] = player.nameColor || null;
+    });
+    return lookup;
+  }, [game?.players]);
 
   useEffect(() => {
     const node = eventScrollRef.current;
@@ -581,7 +904,8 @@ export default function App() {
   }, [chatFeed.length]);
 
   useEffect(() => {
-    if (!game || !playerName || game.phase !== "result") return;
+    if (!game || !playerName || !["result", "gameover"].includes(game.phase))
+      return;
 
     if (
       game.revealOrder?.some(
@@ -610,6 +934,14 @@ export default function App() {
     }
   }, [game, playerName, currentJudge]);
 
+  useEffect(() => {
+    if (!game || game.phase !== "gameover" || game.gameWinner !== playerName)
+      return;
+    if (lastGameWinSoundRef.current === game.round) return;
+    lastGameWinSoundRef.current = game.round;
+    playSound("gameWin");
+  }, [game, playerName, playSound]);
+
   const playerMeta = useMemo(() => {
     if (!game?.players) return [];
     return game.players.map((player, idx) => {
@@ -631,6 +963,8 @@ export default function App() {
                 ?.winner
             ? "won"
             : "played";
+      } else if (game.phase === "gameover") {
+        status = player.name === game.gameWinner ? "game winner" : "game over";
       }
 
       return {
@@ -638,6 +972,8 @@ export default function App() {
         score: game.scores?.[player.name] || 0,
         status,
         isJudge: judgeThisRound,
+        isBot: Boolean(player.bot),
+        nameColor: player.nameColor || null,
       };
     });
   }, [game]);
@@ -659,6 +995,7 @@ export default function App() {
 
     writeLastName(cleanedName);
     writeLastRoom(cleanedRoom);
+    writeBotCount(pendingBotCount);
     syncRoomPath(cleanedRoom);
     setJoinError("");
 
@@ -668,21 +1005,33 @@ export default function App() {
     }));
 
     lastAwardedRoundRef.current = { winnerRound: 0, judgeRound: 0 };
+    sessionRef.current = {
+      roomCode: cleanedRoom,
+      playerName: cleanedName,
+      nameColor: pendingNameColor,
+    };
     setPlayerName(cleanedName);
     setRoomCode(cleanedRoom);
     setPlayerRecord(record);
 
-    socket.emit(
-      "join_room",
-      { roomCode: cleanedRoom, playerName: cleanedName },
+    joinRoomSocket(
+      cleanedRoom,
+      cleanedName,
+      pendingNameColor,
       (result) => {
         if (!result?.ok) {
           setJoinError(result?.error || "Could not join room.");
+          sessionRef.current = {
+            roomCode: "",
+            playerName: "",
+            nameColor: pendingNameColor,
+          };
           setPlayerName("");
           setRoomCode("");
           setGame(null);
         }
       },
+      { botCount: pendingBotCount },
     );
   }
 
@@ -699,6 +1048,11 @@ export default function App() {
     setChatDraft("");
     setEmojiOpen(false);
     lastAwardedRoundRef.current = { winnerRound: 0, judgeRound: 0 };
+    sessionRef.current = {
+      roomCode: "",
+      playerName: "",
+      nameColor: pendingNameColor,
+    };
     clearRoomPath();
     socket.disconnect();
     socket.connect();
@@ -706,6 +1060,7 @@ export default function App() {
 
   function selectCard(card) {
     if (!game || game.phase !== "pick" || isJudge || alreadySubmitted) return;
+    playSound("pick");
     socket.emit("select_card", { roomCode, playerName, card });
   }
 
@@ -719,6 +1074,75 @@ export default function App() {
     socket.emit("choose_winner", { roomCode, playerName, winnerName });
   }
 
+  function renderBottomSubmissions(items, canChoose = false) {
+    return (
+      <div className="bottom-submissions">
+        {items.map((item, i) => {
+          const label = item.player === playerName ? "you" : item.player;
+          const cardShellStyle = canChoose
+            ? styles.revealCard
+            : styles.previewCard;
+          const cardImageStyle = canChoose
+            ? styles.revealImage
+            : styles.previewImage;
+          const nameStyle = getDisplayNameStyle(item.player);
+
+          const contents = (
+            <>
+              {item.card ? (
+                <div
+                  className="card-hover-wrap center-card"
+                  style={{ display: "inline-block" }}
+                >
+                  <img
+                    src={item.card}
+                    alt={`submitted by ${label}`}
+                    style={cardImageStyle}
+                  />
+                </div>
+              ) : (
+                <div style={styles.waitingCard}>waiting...</div>
+              )}
+              <div style={styles.revealText}>
+                <span style={nameStyle}>{label}</span>
+                {canChoose ? (
+                  <span style={styles.revealHint}>click to choose</span>
+                ) : null}
+              </div>
+            </>
+          );
+
+          return canChoose ? (
+            <button
+              key={`${item.player}-${i}`}
+              type="button"
+              style={{
+                ...cardShellStyle,
+                border: `1px solid ${theme.border}`,
+                opacity: item.card ? 1 : 0.75,
+              }}
+              onClick={() => chooseWinner(item.player)}
+              disabled={!item.card}
+            >
+              {contents}
+            </button>
+          ) : (
+            <div
+              key={`${item.player}-${i}`}
+              style={{
+                ...cardShellStyle,
+                border: `1px solid ${theme.border}`,
+                opacity: item.card ? 1 : 0.75,
+              }}
+            >
+              {contents}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   function insertEmoji(code) {
     setChatDraft(
       (prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${code} `,
@@ -727,11 +1151,74 @@ export default function App() {
     window.setTimeout(() => chatInputRef.current?.focus(), 0);
   }
 
+  function getDisplayNameStyle(name) {
+    const nameColor = playerColorByName[name];
+    if (!nameColor) return styles.messageUser;
+    const inner = normalizeColor(nameColor.inner, theme.text);
+    const glow = normalizeColor(nameColor.glow, theme.select);
+    return {
+      ...styles.messageUser,
+      color: inner,
+      textShadow: `0 0 4px ${glow}, 0 0 10px ${glow}`,
+    };
+  }
+
+  function renderMessage(msg, key, style) {
+    return (
+      <div key={key} style={style}>
+        <b style={getDisplayNameStyle(msg.user)}>{msg.user}:</b>{" "}
+        {renderTextWithEmojis(msg.text, styles)}
+      </div>
+    );
+  }
+
+  function renderSoundVolumeControl() {
+    return (
+      <label style={styles.volumeControl}>
+        <span style={styles.themeLabel}>volume:</span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={soundVolume}
+          onChange={(e) => setSoundVolume(normalizeVolume(e.target.value))}
+          style={styles.volumeSlider}
+        />
+        <span style={styles.volumeValue}>
+          {Math.round(soundVolume * 100)}
+        </span>
+      </label>
+    );
+  }
+
   function sendChat() {
     const cleaned = chatDraft.trim();
     if (!cleaned || !roomCode || !playerName) return;
-    socket.emit("send_chat", { roomCode, playerName, text: cleaned });
-    setChatDraft("");
+    joinRoomSocket(
+      roomCode,
+      playerName,
+      pendingNameColor,
+      (joinResult) => {
+        if (!joinResult?.ok) {
+          setJoinError(joinResult?.error || "Could not reconnect to chat.");
+          return;
+        }
+        socket.emit(
+          "send_chat",
+          { roomCode, playerName, text: cleaned },
+          (result) => {
+            if (!result?.ok) {
+              setJoinError(result?.error || "Could not send chat message.");
+              return;
+            }
+            setChatDraft("");
+            playSound("chat");
+          },
+        );
+      },
+      { silent: true },
+    );
   }
 
   function handleChatKeyDown(event) {
@@ -753,6 +1240,15 @@ export default function App() {
     lastAwardedRoundRef.current = { winnerRound: 0, judgeRound: 0 };
   }
 
+  function restartGame() {
+    if (!roomCode || !playerName || game?.phase !== "gameover") return;
+    socket.emit("restart_game", { roomCode, playerName }, (result) => {
+      if (!result?.ok) {
+        setJoinError(result?.error || "Could not restart game.");
+      }
+    });
+  }
+
   if (!game) {
     const previewStats = pendingName.trim()
       ? getStoredPlayer(pendingName)
@@ -771,7 +1267,7 @@ export default function App() {
           <div style={styles.loginCard}>
             <div style={styles.loginTitle}>enter the room</div>
             <div style={styles.loginSubtext}>
-              backend is live now. open two browsers and join the same room.
+              jusdepomme now with extra pomme
             </div>
 
             <div style={styles.fieldGroup}>
@@ -784,6 +1280,49 @@ export default function App() {
                 style={styles.loginInput}
                 maxLength={18}
               />
+            </div>
+
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>name color</label>
+              <div style={styles.colorRow}>
+                <label style={styles.colorControl}>
+                  <span>inner</span>
+                  <input
+                    type="color"
+                    value={pendingNameColor.inner}
+                    onChange={(e) =>
+                      setPendingNameColor((current) => ({
+                        ...current,
+                        inner: e.target.value,
+                      }))
+                    }
+                    style={styles.colorInput}
+                  />
+                </label>
+                <label style={styles.colorControl}>
+                  <span>glow</span>
+                  <input
+                    type="color"
+                    value={pendingNameColor.glow}
+                    onChange={(e) =>
+                      setPendingNameColor((current) => ({
+                        ...current,
+                        glow: e.target.value,
+                      }))
+                    }
+                    style={styles.colorInput}
+                  />
+                </label>
+                <div
+                  style={{
+                    ...styles.namePreview,
+                    color: pendingNameColor.inner,
+                    textShadow: `0 0 5px ${pendingNameColor.glow}, 0 0 12px ${pendingNameColor.glow}`,
+                  }}
+                >
+                  {pendingName.trim() || "preview"}
+                </div>
+              </div>
             </div>
 
             <div style={styles.fieldGroup}>
@@ -803,6 +1342,23 @@ export default function App() {
               </div>
             </div>
 
+            <div style={styles.fieldGroup}>
+              <label style={styles.fieldLabel}>bots</label>
+              <select
+                value={pendingBotCount}
+                onChange={(e) =>
+                  setPendingBotCount(normalizeBotCount(e.target.value))
+                }
+                style={styles.loginInput}
+              >
+                {BOT_OPTIONS.map((count) => (
+                  <option key={count} value={count}>
+                    {count} bot{count === 1 ? "" : "s"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <button
               style={styles.loginButton}
               onClick={enterRoom}
@@ -812,6 +1368,43 @@ export default function App() {
             </button>
 
             {joinError ? <div style={styles.errorBox}>{joinError}</div> : null}
+
+            <div style={styles.activeRoomsBox}>
+              <div style={styles.panelTitle}>active rooms</div>
+              {roomsError ? (
+                <div style={styles.loginHint}>{roomsError}</div>
+              ) : activeRooms.length ? (
+                <div style={styles.activeRoomsList}>
+                  {activeRooms.map((room) => (
+                    <button
+                      key={room.roomCode}
+                      type="button"
+                      style={{
+                        ...styles.activeRoomButton,
+                        ...(normalizeRoom(pendingRoom) === room.roomCode
+                          ? styles.activeRoomButtonSelected
+                          : null),
+                      }}
+                      onClick={() => setPendingRoom(room.roomCode)}
+                    >
+                      <span style={styles.activeRoomName}>{room.roomCode}</span>
+                      <span style={styles.activeRoomMeta}>
+                        {room.playerCount} player
+                        {room.playerCount === 1 ? "" : "s"} · {room.humans}{" "}
+                        human{room.humans === 1 ? "" : "s"} · {room.bots} bot
+                        {room.bots === 1 ? "" : "s"}
+                      </span>
+                      <span style={styles.activeRoomMeta}>
+                        {room.phase} · round {room.round}
+                        {room.judge ? ` · judge ${room.judge}` : ""}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={styles.loginHint}>no active rooms yet</div>
+              )}
+            </div>
 
             {previewStats ? (
               <div style={styles.loginStatsBox}>
@@ -842,6 +1435,7 @@ export default function App() {
                   </option>
                 ))}
               </select>
+              {renderSoundVolumeControl()}
             </div>
           </div>
         </div>
@@ -859,8 +1453,16 @@ export default function App() {
       </div>
 
       <div style={styles.topBar}>
-        <div style={styles.topBarLeft}>
-          jusdepomme.xyz/{roomCode} / {playerName}
+        <div style={styles.topBar}>
+          <div style={styles.topBarLeft}>
+            <a
+              href="https://jusdepomme.node01.xyz"
+              style={{ textDecoration: "none", color: "inherit" }}
+            >
+              jusdepomme.node01.xyz
+            </a>
+            / {roomCode} / {playerName}
+          </div>
         </div>
         <div style={styles.topBarControls}>
           <span style={styles.themeLabel}>theme:</span>
@@ -875,6 +1477,7 @@ export default function App() {
               </option>
             ))}
           </select>
+          {renderSoundVolumeControl()}
           <button style={styles.smallButton} onClick={leaveGame}>
             change room
           </button>
@@ -890,11 +1493,9 @@ export default function App() {
               className="jp-scroll"
               style={styles.chatMessages}
             >
-              {eventFeed.map((msg, i) => (
-                <div key={`event-${i}`} style={styles.eventMessage}>
-                  <b>{msg.user}:</b> {renderTextWithEmojis(msg.text, styles)}
-                </div>
-              ))}
+              {eventFeed.map((msg, i) =>
+                renderMessage(msg, `event-${i}`, styles.eventMessage),
+              )}
             </div>
           </div>
 
@@ -909,11 +1510,9 @@ export default function App() {
               style={styles.chatMessages}
             >
               {chatFeed.length ? (
-                chatFeed.map((msg, i) => (
-                  <div key={`chat-${i}`} style={styles.message}>
-                    <b>{msg.user}:</b> {renderTextWithEmojis(msg.text, styles)}
-                  </div>
-                ))
+                chatFeed.map((msg, i) =>
+                  renderMessage(msg, `chat-${i}`, styles.message),
+                )
               ) : (
                 <div style={styles.emptyChat}>no messages yet</div>
               )}
@@ -1018,11 +1617,14 @@ export default function App() {
 
           <div style={styles.panelTitle}>match this image</div>
           <div style={styles.centerImageWrap}>
-            {game.phase === "result" ? (
+            {["result", "gameover"].includes(game.phase) ? (
               <div style={styles.resultStage}>
                 <div style={styles.winnerShell}>
                   {game.winnerCard ? (
-                    <div className="card-hover-wrap center-card" style={{ display: 'inline-block' }}>
+                    <div
+                      className="card-hover-wrap center-card"
+                      style={{ display: "inline-block" }}
+                    >
                       <img
                         src={game.winnerCard}
                         alt="winning card"
@@ -1033,7 +1635,7 @@ export default function App() {
                 </div>
                 <div style={styles.mainImageShell}>
                   {centerDisplayImage ? (
-                    <div className="card-hover-wrap center-card" style={{ display: 'inline-block' }}>
+                    <div className="prompt-card">
                       <img
                         src={centerDisplayImage}
                         alt="main card"
@@ -1047,7 +1649,7 @@ export default function App() {
               <div style={styles.centerStage}>
                 <div style={styles.mainImageShell}>
                   {centerDisplayImage ? (
-                    <div className="card-hover-wrap center-card" style={{ display: 'inline-block' }}>
+                    <div className="prompt-card">
                       <img
                         src={centerDisplayImage}
                         alt="main card"
@@ -1056,35 +1658,6 @@ export default function App() {
                     </div>
                   ) : null}
                 </div>
-
-                {/* Judge sees submissions in the center to choose a winner. Other players do not see the center grid. */}
-                {game.phase === "judge" && playerName === currentJudge ? (
-                  <div style={styles.submittedRow}>
-                    {(game.revealOrder || []).map((item, i) => (
-                      <button
-                        key={`${item.player}-${i}`}
-                        type="button"
-                        style={{
-                          ...styles.revealCard,
-                          border: `1px solid ${theme.border}`,
-                          opacity: item.card ? 1 : 0.75,
-                        }}
-                        onClick={() => (playerName === currentJudge ? chooseWinner(item.player) : null)}
-                      >
-                        {item.card ? (
-                          <>
-                            <div className="card-hover-wrap center-card" style={{ display: 'inline-block' }}>
-                              <img src={item.card} alt="submitted" style={styles.revealImage} />
-                            </div>
-                            <div style={styles.revealText}>click to choose</div>
-                          </>
-                        ) : (
-                          <div style={styles.waitingCard}>waiting...</div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
               </div>
             )}
           </div>
@@ -1103,6 +1676,8 @@ export default function App() {
                 : `${currentJudge} is choosing the winner`)}
             {game.phase === "result" &&
               "winning card shown on the left — next round starts automatically"}
+            {game.phase === "gameover" &&
+              `${game.gameWinner} wins the game at ${game.scoreLimit || 12} points`}
           </div>
 
           <div style={styles.actionRow}>
@@ -1117,22 +1692,55 @@ export default function App() {
                 {alreadySubmitted ? "submitted" : "submit card"}
               </button>
             ) : null}
+            {game.phase === "gameover" ? (
+              <button style={styles.actionButton} onClick={restartGame}>
+                restart game
+              </button>
+            ) : null}
           </div>
         </div>
 
         <div style={styles.playersPanel} className="jp-scroll">
           <div style={styles.panelTitle}>players</div>
-          {playerMeta.map((p) => (
-            <div key={p.name} style={styles.playerRow}>
-              <div>
+          {playerMeta.map((p) => {
+            const nameColor = p.nameColor
+              ? {
+                  inner: normalizeColor(p.nameColor.inner, theme.text),
+                  glow: normalizeColor(p.nameColor.glow, theme.select),
+                }
+              : null;
+
+            return (
+              <div
+                key={p.name}
+                style={{
+                  ...styles.playerRow,
+                  ...(p.isJudge ? styles.playerRowJudge : null),
+                }}
+              >
                 <div>
-                  {p.name} {p.isJudge ? "👑" : ""}
+                  <div
+                    style={{
+                      ...styles.playerName,
+                      ...(nameColor
+                        ? {
+                            color: nameColor.inner,
+                            textShadow: `0 0 4px ${nameColor.glow}, 0 0 10px ${nameColor.glow}`,
+                          }
+                        : null),
+                      ...(p.isJudge ? styles.playerNameJudge : null),
+                    }}
+                  >
+                    {p.name}
+                    {p.isJudge ? <span style={styles.roleBadge}>♛</span> : null}
+                    {p.isBot ? <span style={styles.roleBadge}>🤖</span> : null}
+                  </div>
+                  <div style={styles.playerStatus}>{p.status}</div>
                 </div>
-                <div style={styles.playerStatus}>{p.status}</div>
+                <span>{p.score}</span>
               </div>
-              <span>{p.score}</span>
-            </div>
-          ))}
+            );
+          })}
 
           <div style={styles.statsBox}>
             <div style={styles.panelTitle}>your saved stats</div>
@@ -1155,11 +1763,13 @@ export default function App() {
               : "your hand"
           : game.phase === "judge"
             ? `${currentJudge} is judging the submitted cards`
-            : "round finished"}
+            : game.phase === "gameover"
+              ? `${game.gameWinner} won the game`
+              : "round finished"}
       </div>
 
-  <div style={styles.handBar} className="handBar">
-  <div style={styles.handInner} className="jp-scroll cardContainer">
+      <div style={styles.handBar} className="handBar">
+        <div style={styles.handInner} className="jp-scroll cardContainer">
           {game.phase === "pick" && !isJudge ? (
             !alreadySubmitted ? (
               myHand.map((img, i) => {
@@ -1168,7 +1778,8 @@ export default function App() {
                 return (
                   <div
                     key={i}
-                    className={`card-hover-wrap hand-card ${selected ? 'selected' : ''} ${i === myHand.length - 1 ? 'lastCard' : ''}`}
+                    className={`card-hover-wrap hand-card ${selected ? "selected" : ""}`}
+                    onMouseEnter={() => playSound("hover")}
                   >
                     <img
                       className="handImage"
@@ -1189,31 +1800,18 @@ export default function App() {
                 );
               })
             ) : (
-              // player already submitted: show submitted cards in the bottom area
-              <div className="bottom-submissions">
-                {submittedPreview.map((item, i) => (
-                  <div key={`sub-${i}`} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
-                    {item.card ? (
-                      <div className="card-hover-wrap center-card" style={{ display: 'inline-block' }}>
-                        <img src={item.card} alt={`submitted-${i}`} style={styles.previewImage} />
-                      </div>
-                    ) : (
-                      <div style={styles.waitingCard}>waiting...</div>
-                    )}
-                    <div style={{ fontSize: 11, marginTop: 6 }}>{item.player === playerName ? 'you' : item.player}</div>
-                  </div>
-                ))}
-              </div>
+              renderBottomSubmissions(submittedPreview)
             )
           ) : game.phase === "pick" && isJudge ? (
-            <div style={styles.handMessage}>
-              judge has no playable hand this round — everyone else submits at
-              the same time
-            </div>
+            renderBottomSubmissions(submittedPreview)
           ) : game.phase === "judge" ? (
+            renderBottomSubmissions(
+              game.revealOrder || [],
+              playerName === currentJudge,
+            )
+          ) : game.phase === "gameover" ? (
             <div style={styles.handMessage}>
-              everyone can see the submissions — only the judge can choose the
-              winner
+              {game.gameWinner} reached {game.scoreLimit || 12} points
             </div>
           ) : (
             <div style={styles.handMessage}>next round is automatic</div>
@@ -1243,7 +1841,8 @@ function makeStyles(theme, ui) {
     },
     marqueeOuter: {
       fontSize: "12px",
-      height: "28px",
+      height: "36px",
+      lineHeight: 1,
       overflow: "hidden",
       background: theme.marqueeBg,
       color: theme.marqueeText,
@@ -1252,25 +1851,30 @@ function makeStyles(theme, ui) {
       alignItems: "center",
       position: "relative",
       whiteSpace: "nowrap",
+      flexShrink: 0,
     },
 
     marqueeInner: {
       display: "inline-block",
       whiteSpace: "nowrap",
       paddingLeft: "100%",
-      lineHeight: "28px",
+      lineHeight: 1,
       animation: "jp-marquee 22s linear infinite",
+      paddingTop: "2px",
+      paddingBottom: "2px",
     },
     loginScreen: {
       flex: 1,
       display: "flex",
-      alignItems: "center",
+      alignItems: isMobile ? "stretch" : "center",
       justifyContent: "center",
       padding: "20px",
+      overflowY: "auto",
+      boxSizing: "border-box",
     },
     loginCard: {
       width: "100%",
-      maxWidth: "460px",
+      maxWidth: "560px",
       background: theme.panelBg,
       border: `1px solid ${theme.border}`,
       boxShadow: `0 0 0 2px ${theme.panelAlt}`,
@@ -1288,6 +1892,44 @@ function makeStyles(theme, ui) {
       textTransform: "lowercase",
     },
     roomRow: { display: "grid", gridTemplateColumns: "1fr auto", gap: "8px" },
+    colorRow: {
+      display: "grid",
+      gridTemplateColumns: isMobile ? "1fr 1fr" : "auto auto 1fr",
+      gap: "8px",
+      alignItems: "center",
+    },
+    colorControl: {
+      display: "grid",
+      gridTemplateColumns: "auto 34px",
+      gap: "6px",
+      alignItems: "center",
+      color: theme.muted,
+      fontSize: "11px",
+      border: `1px solid ${theme.borderSoft}`,
+      background: theme.panelAlt,
+      padding: "5px 6px",
+    },
+    colorInput: {
+      width: "34px",
+      height: "24px",
+      padding: 0,
+      border: `1px solid ${theme.border}`,
+      background: theme.handSlot,
+      cursor: "pointer",
+    },
+    namePreview: {
+      minHeight: "28px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: isMobile ? "center" : "flex-start",
+      gridColumn: isMobile ? "1 / -1" : "auto",
+      padding: "4px 8px",
+      border: `1px dashed ${theme.borderSoft}`,
+      background: theme.handSlot,
+      fontSize: "14px",
+      fontWeight: "bold",
+      boxSizing: "border-box",
+    },
     loginInput: {
       border: `1px solid ${theme.border}`,
       background: theme.handSlot,
@@ -1321,6 +1963,45 @@ function makeStyles(theme, ui) {
       fontSize: "12px",
       lineHeight: 1.5,
     },
+    activeRoomsBox: {
+      border: `1px dashed ${theme.borderSoft}`,
+      background: theme.panelAlt,
+      padding: "10px",
+      fontSize: "12px",
+    },
+    activeRoomsList: {
+      display: "flex",
+      flexDirection: "column",
+      gap: "6px",
+      maxHeight: "150px",
+      overflowY: "auto",
+      paddingRight: "2px",
+    },
+    activeRoomButton: {
+      border: `1px solid ${theme.borderSoft}`,
+      background: theme.handSlot,
+      color: theme.text,
+      cursor: "pointer",
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      gap: "2px",
+      padding: "7px 8px",
+      textAlign: "left",
+      fontFamily: "Comic Sans MS, Verdana, sans-serif",
+    },
+    activeRoomButtonSelected: {
+      borderColor: theme.select,
+      boxShadow: `0 0 0 2px ${theme.panelBg}, 0 0 10px ${theme.select}`,
+    },
+    activeRoomName: {
+      fontWeight: "bold",
+      color: theme.text,
+    },
+    activeRoomMeta: {
+      fontSize: "11px",
+      color: theme.muted,
+      lineHeight: 1.25,
+    },
     loginHint: { fontSize: "12px", color: theme.muted, textAlign: "center" },
     topBar: {
       display: "flex",
@@ -1348,6 +2029,25 @@ function makeStyles(theme, ui) {
       fontSize: "12px",
       padding: "3px 6px",
       fontFamily: "Comic Sans MS, Verdana, sans-serif",
+    },
+    volumeControl: {
+      display: "grid",
+      gridTemplateColumns: "auto 86px 24px",
+      alignItems: "center",
+      gap: "6px",
+      color: theme.muted,
+      fontSize: "11px",
+    },
+    volumeSlider: {
+      width: "86px",
+      accentColor: theme.select,
+      cursor: "pointer",
+    },
+    volumeValue: {
+      color: theme.text,
+      fontSize: "11px",
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums",
     },
     smallButton: {
       border: `1px solid ${theme.border}`,
@@ -1458,6 +2158,10 @@ function makeStyles(theme, ui) {
       lineHeight: 1.35,
       wordBreak: "break-word",
     },
+    messageUser: {
+      color: theme.text,
+      fontWeight: "bold",
+    },
     eventMessage: {
       marginBottom: "5px",
       lineHeight: 1.35,
@@ -1557,8 +2261,8 @@ function makeStyles(theme, ui) {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      padding: isMobile ? "8px 4px 120px" : "12px 8px 120px", // leave space for submitted row
-      overflow: 'visible', // allow enlarged center-card to overflow without clipping
+      padding: isMobile ? "8px 4px" : "12px 8px",
+      overflow: "visible", // allow enlarged center-card to overflow without clipping
     },
     centerStage: {
       width: "100%",
@@ -1584,6 +2288,7 @@ function makeStyles(theme, ui) {
       width: "fit-content",
       maxWidth: "100%",
       padding: "8px",
+      overflow: "hidden",
       border: `1px solid ${theme.border}`,
       background: theme.handSlot,
       boxShadow: `0 0 0 4px ${theme.panelAlt}`,
@@ -1614,14 +2319,6 @@ function makeStyles(theme, ui) {
       maxWidth: isMobile ? "92vw" : "280px",
       maxHeight: isMobile ? "180px" : "210px",
       objectFit: "contain",
-    },
-    submittedRow: {
-      display: "flex",
-      flexWrap: "wrap",
-      justifyContent: "center",
-      gap: isMobile ? "10px" : "14px",
-      width: "100%",
-      minHeight: isMobile ? "120px" : "160px",
     },
     previewCard: {
       display: "inline-flex",
@@ -1668,12 +2365,21 @@ function makeStyles(theme, ui) {
       boxSizing: "border-box",
     },
     revealImage: {
-      width: "100%",
-      height: isMobile ? "100px" : "130px",
-      objectFit: "cover",
       display: "block",
+      width: "auto",
+      maxWidth: isMobile ? "128px" : "164px",
+      maxHeight: isMobile ? "100px" : "130px",
+      objectFit: "contain",
     },
     revealText: { fontSize: "11px", marginTop: "6px" },
+    revealHint: {
+      display: "block",
+      marginTop: "2px",
+      color: theme.muted,
+      fontSize: "10px",
+      fontWeight: "normal",
+      textShadow: "none",
+    },
     centerText: {
       fontSize: "12px",
       marginTop: "4px",
@@ -1699,7 +2405,37 @@ function makeStyles(theme, ui) {
       justifyContent: "space-between",
       alignItems: "center",
       borderBottom: `1px dotted ${theme.borderSoft}`,
-      padding: "5px 0",
+      padding: "5px 6px",
+      marginBottom: "2px",
+    },
+    playerRowJudge: {
+      border: `1px solid ${theme.select}`,
+      background: theme.handSlot,
+      boxShadow: `0 0 0 2px ${theme.panelAlt}, 0 0 14px ${theme.select}`,
+    },
+    playerName: {
+      fontWeight: "bold",
+      lineHeight: 1.2,
+    },
+    playerNameJudge: {
+      color: theme.select,
+      textShadow: `0 0 5px ${theme.select}, 0 0 12px ${theme.select}`,
+    },
+    roleBadge: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      marginLeft: "5px",
+      minWidth: "16px",
+      minHeight: "16px",
+      padding: "0 4px",
+      border: `1px solid ${theme.select}`,
+      background: theme.panelAlt,
+      color: theme.select,
+      fontSize: "10px",
+      lineHeight: 1,
+      boxShadow: `0 0 8px ${theme.select}`,
+      verticalAlign: "middle",
     },
     playerStatus: { fontSize: "10px", color: theme.muted },
     statsBox: {
